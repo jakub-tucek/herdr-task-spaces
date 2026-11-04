@@ -26,8 +26,9 @@ export function prTarget(remotes) {
 export function prMarker(pr) {
   if (!pr) return null;
   if (pr.kind === "unknown") return { label: "PR ?", tone: "dim", title: pr.error };
-  return { label: pr.kind === "draft" ? "Draft" : "Open", tone: pr.kind === "draft" ? "muted" : "ansi2",
-    title: `${pr.kind === "draft" ? "Draft" : "Open"} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more open PR(s) for this branch` : ""}` };
+  const label = pr.kind === "merged" ? "Merged" : pr.kind === "draft" ? "Draft" : "Open";
+  return { label, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : "ansi2",
+    title: `${label} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : ""}` };
 }
 
 export class PullRequests {
@@ -64,22 +65,28 @@ export class PullRequests {
     const work = this.tail.then(async () => {
       let entry;
       try {
-        const items = []; let complete = false;
-        for (let page = 1; page <= MAX_PAGES; page++) {
-          const batch = await this.loadPulls(repository, page);
-          if (!Array.isArray(batch)) throw new Error("GitHub returned an invalid pull-request list.");
-          for (const pr of batch) {
-            if (pr.state !== "open") continue;
-            if (!Number.isInteger(pr.number) || typeof pr.draft !== "boolean" || typeof pr.head?.ref !== "string") {
-              throw new Error("GitHub returned incomplete PR status.");
+        const items = []; let complete = true, openComplete = false;
+        for (const state of ["open", "closed"]) {
+          let finished = false;
+          for (let page = 1; page <= MAX_PAGES; page++) {
+            const batch = await this.loadPulls(repository, page, state);
+            if (!Array.isArray(batch)) throw new Error("GitHub returned an invalid pull-request list.");
+            for (const pr of batch) {
+              if (pr.state !== state) continue;
+              if (state === "closed" && !pr.merged_at) continue;
+              if (!Number.isInteger(pr.number) || typeof pr.draft !== "boolean" || typeof pr.head?.ref !== "string") {
+                throw new Error("GitHub returned incomplete PR status.");
+              }
+              const head = pr.head.repo?.full_name?.toLowerCase();
+              if (head) items.push({ head, branch: pr.head.ref, number: pr.number,
+                kind: state === "closed" ? "merged" : pr.draft ? "draft" : "open", url: `https://github.com/${repository}/pull/${pr.number}` });
             }
-            const head = pr.head.repo?.full_name?.toLowerCase();
-            if (head) items.push({ head, branch: pr.head.ref, number: pr.number,
-              kind: pr.draft ? "draft" : "open", url: `https://github.com/${repository}/pull/${pr.number}` });
+            if (batch.length < 100) { finished = true; break; }
           }
-          if (batch.length < 100) { complete = true; break; }
+          if (state === "open") openComplete = finished;
+          complete = complete && finished;
         }
-        entry = { at: this.now(), items, complete, error: null };
+        entry = { at: this.now(), items, complete, openComplete, error: null };
       } catch (e) {
         entry = { at: this.now(), items: previous?.items ?? [], complete: false,
           error: String(e).replace(/^Error:\s*/, "").slice(0, 500) };
@@ -105,8 +112,11 @@ export class PullRequests {
       return { kind: "unknown", error: "PR status is being refreshed; the previous result is stale." };
     }
     const matches = data.items.filter(pr => pr.head === target.value.head && pr.branch === git.branch);
-    const found = matches.find(pr => pr.kind === "open") ?? matches[0];
+    const found = matches.find(pr => pr.kind === "open") ?? matches.find(pr => pr.kind === "draft")
+      ?? (data.openComplete ? matches[0] : null);
+    // Promotion PRs do not mean a long-lived integration branch is finished.
+    if (found?.kind === "merged" && ["develop", "main", "master"].includes(git.branch)) return null;
     return found ? { ...found, count: matches.length }
-      : data.complete ? null : { kind: "unknown", error: "GitHub's open PR list exceeded the lookup limit. This branch's status is unknown." };
+      : data.complete ? null : { kind: "unknown", error: "GitHub's PR list exceeded the lookup limit. This branch's status is unknown." };
   }
 }

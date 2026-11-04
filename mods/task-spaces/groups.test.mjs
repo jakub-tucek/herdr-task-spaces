@@ -163,3 +163,14 @@ test("layout props configure labels/order without source edits; malformed config
   const [repo] = sections([row("ui", "1-g-frontend-button"), row("api", "2-g-backend-query")], configuredGroups(groups));
   assert.deepEqual(repo.groups.map(g => g.label), ["Backend", "UI"]);
 });
+
+test("bundled skill examples agree with the sidebar's branch parser", () => {
+  const text = readFileSync(new URL("../../skills/herdr-task-spaces/SKILL.md", import.meta.url), "utf8");
+  const branches = [...text.matchAll(/`([0-9]+-[^`]+)`/g)].map(match => match[1]);
+  assert.ok(branches.length >= 3);
+  for (const branch of branches) {
+    assert.match(branch, /^[0-9]+(?:-[a-z0-9]+)+$/);
+    if (branch.includes("-g-")) assert.ok(branchTask(branch), branch);
+    else assert.equal(branchTask(branch), null, branch);
+  }
+});

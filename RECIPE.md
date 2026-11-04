@@ -1,7 +1,7 @@
 # Herdr Task Spaces
 
 Organize Herdr worktrees by repository and branch-defined task groups. See Draft
-and Open GitHub PR badges beside each workspace, keep ungrouped workspaces directly
+Open, and Merged GitHub PR badges beside each workspace, keep ungrouped workspaces directly
 under their repo, and collapse groups without moving or renaming your work.
 
 ![Task Spaces](preview.png)
@@ -11,7 +11,7 @@ under their repo, and collapse groups without moving or renaming your work.
 - A native Spaces sidebar that replaces the stock Spaces mod in a personal layout.
 - Machine headers, repository headers, and optional named task-group headers.
 - Workspace rows with their existing names or readable task slugs, Git ahead/behind
-  and dirty indicators, and a small gray Draft or green Open PR badge.
+  and dirty indicators, and a small gray Draft, green Open, or purple Merged PR badge.
 - PR ? for unavailable or stale metadata. Hover for the number, URL, or explanation.
 - Ungrouped rows directly under their repo, not inside a category. Orchestrators
   appear first with a compass; custom groups require no registration.
@@ -36,8 +36,10 @@ spaces and panes, never bundled workspace assignments.
 Show GitHub PR status for the current head repository and branch. Read origin
 and upstream on the checkout's own machine; query GitHub using local gh on the
 app machine. Support github.com only. Match forks correctly. Cache for five
-minutes across worktrees; serialize reads and cap pagination at 500 PRs. Unknown
-status must not look like no PR. If multiple PRs match, prefer Open over Draft.
+minutes across worktrees; serialize reads and cap pagination at 500 open and 500
+recently updated closed PRs. Only merged closed PRs get a badge. Unknown status
+must not look like no PR. If multiple PRs match, prefer Open over Draft over Merged.
+Suppress Merged for develop, main, and master; keep active PR badges on those branches.
 
 Preserve normal blocked/done/working indicators. Optional PR failures must not
 interrupt Git refresh or navigation. Never post, resolve, fetch, stage, commit,

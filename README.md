@@ -1,6 +1,6 @@
 # Herdr Task Spaces
 
-Group Herdr worktrees by repository and task, with **Draft/Open GitHub PR badges**
+Group Herdr worktrees by repository and task, with **Draft/Open/Merged GitHub PR badges**
 beside each branch. Keep ordinary workspaces directly under their repo, collapse
 named groups, and keep the same spaces, terminals, and menus.
 
@@ -10,7 +10,7 @@ named groups, and keep the same spaces, terminals, and menus.
 
 - Groups by **machine → repository → task group**. Machines and repos stay separate.
 - Reads group membership from branch names; custom groups need no registration.
-- Shows **Draft**, **Open**, or **PR ?** with the PR number and URL in a tooltip.
+- Shows **Draft**, **Open**, **Merged**, or **PR ?** with the PR number and URL in a tooltip.
 - Supports local and SSH worktrees, fork PRs, group folding, and a compact rail.
 - Keeps ungrouped workspaces one level up, without an Ungrouped header.
 - Does not rename branches, move worktrees, or create spaces to enforce grouping.
@@ -41,6 +41,38 @@ different app home. To copy the mod without changing any layout, omit `--layout`
 
 To stop using it, switch back with `herdr-app do layout.switch '{"name":"main"}'`.
 Terminals keep running. Keep the clone to return to this view later.
+
+## Optional: teach your AI the grouping convention
+
+The mod reads branch names; it does not teach your agent how to create them.
+The bundled [herdr-task-spaces skill](skills/herdr-task-spaces/SKILL.md) covers
+branch naming, group selection and inheritance, orchestrators, and safe local/SSH
+worktree creation. The mod installer does **not** install this skill or change
+your agent configuration.
+
+From this repository directory, copy it to a skill directory your agent supports.
+This example uses `~/.agents/skills`; change `skill_dir` if your agent uses a
+different global or project-local location:
+
+```sh
+skill_dir="$HOME/.agents/skills/herdr-task-spaces"
+if [ -e "$skill_dir" ] || [ -L "$skill_dir" ]; then
+  printf 'Skill already exists at %s; compare it before updating.\n' "$skill_dir"
+else
+  mkdir -p "$(dirname "$skill_dir")"
+  cp -R skills/herdr-task-spaces "$skill_dir"
+fi
+```
+
+Reload your agent's skills or start a new session, then ask:
+
+> Use herdr-task-spaces to create a worktree for issue 1234 in the backend group.
+
+The skill respects explicit branch names and repository rules, asks for missing
+issue numbers, and creates an App space or starts an agent only when requested.
+If you already use another worktree-management skill, check their naming rules
+for conflicts before enabling both. Updates are manual: compare the installed
+skill with the bundled version; the command above never overwrites it.
 
 ## Branch names
 
@@ -94,9 +126,13 @@ runs local `hc machine ls` and queries **github.com only** using local `gh`, eve
 for SSH worktrees. No GitHub credentials are sent to remote hosts.
 
 PR lists are cached for five minutes and shared across worktrees in the same
-base repo. Reads run serially, stop after 500 PRs, and distinguish unknown status
+base repo. Reads run serially, stop after 500 open and 500 recently updated closed
+PRs, and distinguish unknown status
 from no PR. Fork matches include head repo and branch. If one branch has several
-PRs, Open takes precedence over Draft; the tooltip notes additional matches.
+PRs, Open takes precedence over Draft, then Merged; the tooltip notes additional
+matches. Long-lived `develop`, `main`, and `master` branches never show Merged;
+their active Open/Draft badges still appear. Closed-but-unmerged PRs have no badge. Older merges outside the lookup
+limit show PR ? rather than claiming no PR.
 
 This mod has its own monitoring, separate from Annotator: one filesystem watch
 per local Git directory, an inherited 250 ms scheduling check, 15-second machine
@@ -108,7 +144,8 @@ The mod stores fold state locally; it ships no workspace IDs or private repo dat
 
 ## Development
 
-Node.js 22+ for JavaScript tests; Python 3 for installer tests. No npm dependencies.
+Node.js 22+ for JavaScript tests; Python 3 for installer and optional skill-setup
+tests. No npm dependencies.
 
 ```sh
 npm test

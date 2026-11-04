@@ -29,14 +29,14 @@ test("concurrent worktrees and machines share one GitHub lookup per base reposit
   let reads = 0, remoteReads = 0;
   const reader = new PullRequests({ remotes: async () => { remoteReads++; return remotes; }, pulls: async () => { reads++; return [pr()]; } });
   await Promise.all([reader.refresh(git(), {}), reader.refresh(git(), {}), reader.refresh(git("remote-repo"), { on: "server" })]);
-  assert.equal(remoteReads, 2); assert.equal(reads, 1);
+  assert.equal(remoteReads, 2); assert.equal(reads, 2);
   assert.equal(reader.state(git("remote-repo")).kind, "open");
 });
 
 test("TTL refresh updates draft to open and then removes a closed PR", async () => {
   let now = 1, result = [pr(true)], reads = 0;
   const reader = new PullRequests({ now: () => now, remotes: async () => remotes, pulls: async () => { reads++; return result; } });
-  await reader.refresh(git(), {}); await reader.refresh(git(), {}); assert.equal(reads, 1);
+  await reader.refresh(git(), {}); await reader.refresh(git(), {}); assert.equal(reads, 2);
   now += PR_TTL; assert.equal(reader.state(git()).kind, "unknown");
   result = [pr(false)]; await reader.refresh(git(), {}); assert.equal(reader.state(git()).kind, "open");
   now += PR_TTL; result = []; await reader.refresh(git(), {}); assert.equal(reader.state(git()), null);
@@ -54,7 +54,7 @@ test("missing CLI, auth, and connectivity produce unknown, not stale Open or fal
 
 test("pagination finds later PRs; a capped list never claims no PR", async () => {
   let pages = [];
-  const reader = new PullRequests({ remotes: async () => remotes, pulls: async (_repo, page) => { pages.push(page); return page === 1 ? Array.from({ length: 100 }, (_, i) => pr(false, `other-${i}`)) : [pr(true)]; } });
+  const reader = new PullRequests({ remotes: async () => remotes, pulls: async (_repo, page, state) => { if (state === "closed") return []; pages.push(page); return page === 1 ? Array.from({ length: 100 }, (_, i) => pr(false, `other-${i}`)) : [pr(true)]; } });
   await reader.refresh(git(), {}); assert.deepEqual(pages, [1, 2]); assert.equal(reader.state(git()).kind, "draft");
   const capped = new PullRequests({ remotes: async () => remotes, pulls: async () => Array.from({ length: 100 }, () => pr(false, "other")) });
   await capped.refresh(git(), {}); assert.equal(capped.state(git()).kind, "unknown");
@@ -72,7 +72,7 @@ test("an Open PR takes precedence when the same branch also has a draft", async 
   await reader.refresh(git(), {});
   assert.equal(reader.state(git()).kind, "open");
   assert.equal(reader.state(git()).count, 2);
-  assert.match(prMarker(reader.state(git())).title, /1 more open PR/);
+  assert.match(prMarker(reader.state(git())).title, /1 more PR/);
 });
 
 function adapters(exec) {
@@ -93,8 +93,63 @@ test("Git remotes run on the checkout machine; GitHub requests always run locall
   assert.equal(calls[0][2].cwd, "/remote/checkout");
   assert.equal(calls[1][0], "gh"); assert.equal(calls[1].length, 2);
   assert.ok(calls[1][1].includes("github.com"));
-  assert.ok(calls[1][1].includes("repos/team/project/pulls?state=open&per_page=100&page=2"));
+  assert.ok(calls[1][1].includes("repos/team/project/pulls?state=open&sort=updated&direction=desc&per_page=100&page=2"));
+  await api.githubPulls("team/project", 1, "closed");
+  assert.ok(calls[2][1].includes("repos/team/project/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=1"));
   assert.ok(!calls[1][1].includes("--method"));
+});
+
+test("a merged PR remains purple after TTL refresh; closed without merge has no badge", async () => {
+  let now = 1, merged = false;
+  const reader = new PullRequests({ now: () => now, remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? (merged ? [] : [pr()]) :
+      merged ? [{ ...pr(), state: "closed", merged_at: "2026-11-04T10:00:00Z" },
+        { ...pr(false, "abandoned"), state: "closed", merged_at: null }] : [] });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "open");
+  merged = true; now += PR_TTL;
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "merged");
+  assert.equal(prMarker(reader.state(git())).label, "Merged");
+  assert.equal(prMarker(reader.state(git())).tone, "ansi5");
+  assert.match(prMarker(reader.state(git())).title, /Merged PR #42/);
+  assert.equal(reader.state(git("local-repo", "abandoned")), null);
+});
+
+test("active PRs beat old merges; merged matches retain fork identity", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [pr(true)] : [
+      { ...pr(), state: "closed", merged_at: "2026-11-04T10:00:00Z" },
+      { ...pr(false, "fork-only", "fork/project"), state: "closed", merged_at: "2026-11-04T10:00:00Z" }] });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "draft");
+  assert.equal(reader.state(git("local-repo", "fork-only")), null);
+});
+
+test("long-lived branches never show Merged, but retain active PR badges", async () => {
+  const branches = ["develop", "main", "master"];
+  let active = false;
+  let now = 1;
+  const reader = new PullRequests({ now: () => now, remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open"
+      ? active ? [pr(false, "develop"), pr(true, "main")] : []
+      : branches.map(branch => ({ ...pr(false, branch), state: "closed", merged_at: "2026-11-04T10:00:00Z" })) });
+  await reader.refresh(git(), {});
+  for (const branch of branches) assert.equal(reader.state(git("local-repo", branch)), null, branch);
+  active = true; now += PR_TTL;
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git("local-repo", "develop")).kind, "open");
+  assert.equal(reader.state(git("local-repo", "main")).kind, "draft");
+  assert.equal(reader.state(git("local-repo", "master")), null);
+});
+
+test("a truncated open list cannot claim an old merged PR is current", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open"
+      ? Array.from({ length: 100 }, () => pr(false, "other"))
+      : [{ ...pr(), state: "closed", merged_at: "2026-11-04T10:00:00Z" }] });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "unknown");
 });
 
 test("missing gh produces local install/sign-in guidance without throwing into the view", async () => {
