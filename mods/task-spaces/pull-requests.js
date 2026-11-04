@@ -1,0 +1,112 @@
+// Read-only GitHub metadata. Shared across worktrees; unknown is never "no PR".
+export const PR_TTL = 5 * 60 * 1000;
+const MAX_PAGES = 5;
+
+export function githubRepository(url) {
+  if (typeof url !== "string") return null;
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^\s]+)$/.exec(url);
+  if (!match) return null;
+  const name = match[1].replace(/\/$/, "").replace(/\.git$/, "");
+  return /^[A-Za-z0-9_-][A-Za-z0-9_.-]*\/[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(name)
+    ? name.toLowerCase() : null;
+}
+
+export function prTarget(remotes) {
+  const urls = new Map();
+  for (const line of remotes.split("\n")) {
+    const match = /^(\S+)\s+(\S+)\s+\(fetch\)$/.exec(line.trim());
+    if (match) urls.set(match[1], githubRepository(match[2]));
+  }
+  // Don't guess a fork's identity from a different or unsupported origin.
+  const head = urls.has("origin") ? urls.get("origin") : urls.get("upstream");
+  const base = urls.get("upstream") ?? head;
+  return head && base ? { head, base } : null;
+}
+
+export function prMarker(pr) {
+  if (!pr) return null;
+  if (pr.kind === "unknown") return { label: "PR ?", tone: "dim", title: pr.error };
+  return { label: pr.kind === "draft" ? "Draft" : "Open", tone: pr.kind === "draft" ? "muted" : "ansi2",
+    title: `${pr.kind === "draft" ? "Draft" : "Open"} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more open PR(s) for this branch` : ""}` };
+}
+
+export class PullRequests {
+  constructor({ remotes, pulls, now = () => Date.now() }) {
+    this.loadRemotes = remotes; this.loadPulls = pulls; this.now = now;
+    this.targets = new Map(); this.repositories = new Map();
+    this.pendingTargets = new Map(); this.pendingRepos = new Map();
+    this.tail = Promise.resolve();
+  }
+
+  async refresh(git, location) {
+    if (!git?.repo || !git.branch || git.branch === "(detached)" || git.branch === "(initial)") return false;
+    let target = this.targets.get(git.repo);
+    if (!target || this.now() - target.at >= PR_TTL) {
+      let work = this.pendingTargets.get(git.repo);
+      if (!work) {
+        work = (async () => {
+          let entry;
+          try { entry = { at: this.now(), value: prTarget(await this.loadRemotes(location)), error: null }; }
+          catch { entry = { at: this.now(), value: null, error: "Cannot read this checkout's Git remotes. PR status is unavailable." }; }
+          this.targets.set(git.repo, entry);
+          return entry;
+        })();
+        this.pendingTargets.set(git.repo, work);
+        work.finally(() => this.pendingTargets.delete(git.repo));
+      }
+      target = await work;
+    }
+    if (!target.value) return true;
+    const repository = target.value.base, previous = this.repositories.get(repository);
+    if (previous && this.now() - previous.at < PR_TTL) return false;
+    if (this.pendingRepos.has(repository)) { await this.pendingRepos.get(repository); return true; }
+    // Bound concurrency. GitHub reads never block the sidebar's Git refresh.
+    const work = this.tail.then(async () => {
+      let entry;
+      try {
+        const items = []; let complete = false;
+        for (let page = 1; page <= MAX_PAGES; page++) {
+          const batch = await this.loadPulls(repository, page);
+          if (!Array.isArray(batch)) throw new Error("GitHub returned an invalid pull-request list.");
+          for (const pr of batch) {
+            if (pr.state !== "open") continue;
+            if (!Number.isInteger(pr.number) || typeof pr.draft !== "boolean" || typeof pr.head?.ref !== "string") {
+              throw new Error("GitHub returned incomplete PR status.");
+            }
+            const head = pr.head.repo?.full_name?.toLowerCase();
+            if (head) items.push({ head, branch: pr.head.ref, number: pr.number,
+              kind: pr.draft ? "draft" : "open", url: `https://github.com/${repository}/pull/${pr.number}` });
+          }
+          if (batch.length < 100) { complete = true; break; }
+        }
+        entry = { at: this.now(), items, complete, error: null };
+      } catch (e) {
+        entry = { at: this.now(), items: previous?.items ?? [], complete: false,
+          error: String(e).replace(/^Error:\s*/, "").slice(0, 500) };
+      }
+      this.repositories.set(repository, entry);
+    });
+    this.pendingRepos.set(repository, work);
+    this.tail = work.catch(() => {});
+    try { await work; } finally { this.pendingRepos.delete(repository); }
+    return true;
+  }
+
+  state(git) {
+    if (!git?.repo || !git.branch || git.branch === "(detached)" || git.branch === "(initial)") return null;
+    const target = this.targets.get(git.repo);
+    if (!target) return null; // Initial load has no claimed status.
+    if (target.error) return { kind: "unknown", error: target.error };
+    if (!target.value) return null; // Not a supported GitHub remote.
+    const data = this.repositories.get(target.value.base);
+    if (!data) return null;
+    if (data.error) return { kind: "unknown", error: data.error };
+    if (this.now() - data.at >= PR_TTL || this.now() - target.at >= PR_TTL) {
+      return { kind: "unknown", error: "PR status is being refreshed; the previous result is stale." };
+    }
+    const matches = data.items.filter(pr => pr.head === target.value.head && pr.branch === git.branch);
+    const found = matches.find(pr => pr.kind === "open") ?? matches[0];
+    return found ? { ...found, count: matches.length }
+      : data.complete ? null : { kind: "unknown", error: "GitHub's open PR list exceeded the lookup limit. This branch's status is unknown." };
+  }
+}

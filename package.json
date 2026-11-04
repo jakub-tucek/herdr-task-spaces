@@ -1,0 +1,11 @@
+{
+  "name": "herdr-task-spaces",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test mods/task-spaces/*.test.mjs",
+    "test:install": "python3 -m unittest discover -s tests -v"
+  }
+}

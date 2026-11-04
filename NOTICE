@@ -1,0 +1,12 @@
+Herdr Task Spaces
+
+Includes a modified version of Herdr App's Spaces sidebar, originally distributed
+by Herdr under the Apache License, Version 2.0.
+Upstream: https://github.com/herdrdev/herdr-app
+Original sidebar: defaults/mods/spaces/main.js (installed Spaces mod 0.1.11).
+
+Modifications include branch-based task grouping, flattened ungrouped rows,
+GitHub PR status badges, configurable group labels, tests, and installation tools.
+
+Herdr's application binaries, fonts, and icons are not bundled. Runtime icon
+references use the person's existing Herdr installation.
