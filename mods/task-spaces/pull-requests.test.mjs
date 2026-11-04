@@ -94,6 +94,35 @@ test("pagination finds later PRs; a capped list never claims no PR", async () =>
   await capped.refresh(git(), {}); assert.equal(capped.state(git()).kind, "unknown");
 });
 
+test("a capped repo history falls back to the exact branch and confirms no PR", async () => {
+  const filters = [];
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state, filter) => {
+      if (filter) { filters.push(filter); return []; }
+      return state === "open" ? [] : Array.from({ length: 100 }, () =>
+        ({ ...pr(false, "old-task"), state: "closed", merged_at: "2026-11-04T10:00:00Z" }));
+    } });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()), null);
+  assert.deepEqual(filters, [{ head: "team/project", branch: "feature" }, { head: "team/project", branch: "feature" }]);
+  await reader.refresh(git("remote-repo"), {});
+  assert.equal(reader.state(git("remote-repo")), null);
+  assert.equal(filters.length, 2, "worktrees share the targeted result, including confirmed absence");
+});
+
+test("exact-branch fallback finds old merges without borrowing a fork's PR", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state, filter) => {
+      if (state === "open") return [];
+      if (!filter) return Array.from({ length: 100 }, () => ({ ...pr(false, "other"), state: "closed", merged_at: null }));
+      return [{ ...pr(false, "feature", "fork/project"), state: "closed", merged_at: "2026-11-04T10:00:00Z" },
+        { ...pr(), number: 43, state: "closed", merged_at: "2026-11-04T10:00:00Z" }];
+    } });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "merged");
+  assert.equal(reader.state(git()).number, 43);
+});
+
 test("unsupported remotes and detached heads make no GitHub requests", async () => {
   let calls = 0;
   const reader = new PullRequests({ remotes: async () => "origin\tgit@elsewhere:team/project.git (fetch)", pulls: async () => { calls++; return []; } });
@@ -130,6 +159,9 @@ test("Git remotes run on the checkout machine; GitHub requests always run locall
   assert.ok(calls[1][1].includes("repos/team/project/pulls?state=open&sort=updated&direction=desc&per_page=100&page=2"));
   await api.githubPulls("team/project", 1, "closed");
   assert.ok(calls[2][1].includes("repos/team/project/pulls?state=closed&sort=updated&direction=desc&per_page=100&page=1"));
+  await api.githubPulls("team/project", 1, "closed", { head: "fork/project", branch: "feature/a&b" });
+  assert.ok(calls[3][1].some(arg => arg.includes("&head=fork%3Afeature%2Fa%26b")));
+  assert.equal(calls[3].length, 2, "targeted requests also stay local");
   assert.ok(!calls[1][1].includes("--method"));
 });
 

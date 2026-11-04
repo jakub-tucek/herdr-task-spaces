@@ -32,6 +32,14 @@ export function prMarker(pr) {
     title: `${label} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : ""}` };
 }
 
+const branchKey = (target, branch) => JSON.stringify([target.base, target.head, branch]);
+function matchingPr(data, head, branch) {
+  const matches = data.items.filter(pr => pr.head === head && pr.branch === branch);
+  const found = matches.find(pr => pr.kind === "open") ?? matches.find(pr => pr.kind === "draft")
+    ?? (data.openComplete ? matches[0] : null);
+  return { matches, found };
+}
+
 export class PullRequests {
   constructor({ remotes, pulls, now = () => Date.now() }) {
     this.loadRemotes = remotes; this.loadPulls = pulls; this.now = now;
@@ -59,9 +67,21 @@ export class PullRequests {
       target = await work;
     }
     if (!target.value) return true;
-    const repository = target.value.base, previous = this.repositories.get(repository);
+    const repository = target.value.base;
+    let changed = await this.refreshList(repository, repository);
+    const data = this.repositories.get(repository);
+    // A repository's history cap says nothing about this particular branch.
+    if (data && !data.error && !data.complete && !matchingPr(data, target.value.head, git.branch).found) {
+      changed = await this.refreshList(repository, branchKey(target.value, git.branch),
+        { head: target.value.head, branch: git.branch }) || changed;
+    }
+    return changed;
+  }
+
+  async refreshList(repository, key, filter) {
+    const previous = this.repositories.get(key);
     if (previous && this.now() - previous.at < PR_TTL) return false;
-    if (this.pendingRepos.has(repository)) { await this.pendingRepos.get(repository); return true; }
+    if (this.pendingRepos.has(key)) { await this.pendingRepos.get(key); return true; }
     // Bound concurrency. GitHub reads never block the sidebar's Git refresh.
     const work = this.tail.then(async () => {
       let entry;
@@ -70,7 +90,7 @@ export class PullRequests {
         for (const state of ["open", "closed"]) {
           let finished = false;
           for (let page = 1; page <= MAX_PAGES; page++) {
-            const batch = await this.loadPulls(repository, page, state);
+            const batch = await this.loadPulls(repository, page, state, filter);
             if (!Array.isArray(batch)) throw new Error("GitHub returned an invalid pull-request list.");
             for (const pr of batch) {
               if (pr.state !== state) continue;
@@ -93,11 +113,11 @@ export class PullRequests {
         entry = { ...previous, at: this.now(), items: previous?.items ?? [],
           error: String(e).replace(/^Error:\s*/, "").slice(0, 500) };
       }
-      this.repositories.set(repository, entry);
+      this.repositories.set(key, entry);
     });
-    this.pendingRepos.set(repository, work);
+    this.pendingRepos.set(key, work);
     this.tail = work.catch(() => {});
-    try { await work; } finally { this.pendingRepos.delete(repository); }
+    try { await work; } finally { this.pendingRepos.delete(key); }
     return true;
   }
 
@@ -107,15 +127,16 @@ export class PullRequests {
     if (!target) return null; // Initial load has no claimed status.
     if (target.error) return { kind: "unknown", error: target.error };
     if (!target.value) return null; // Not a supported GitHub remote.
-    const data = this.repositories.get(target.value.base);
+    let data = this.repositories.get(target.value.base);
     if (!data) return null;
+    if (!data.complete && !matchingPr(data, target.value.head, git.branch).found) {
+      data = this.repositories.get(branchKey(target.value, git.branch)) ?? data;
+    }
     if (data.validAt == null || this.now() - data.validAt >= PR_TTL + PR_GRACE
       || this.now() - target.at >= PR_TTL + PR_GRACE) {
       return { kind: "unknown", error: data.error ?? "PR status is unavailable; the last successful result is over ten minutes old." };
     }
-    const matches = data.items.filter(pr => pr.head === target.value.head && pr.branch === git.branch);
-    const found = matches.find(pr => pr.kind === "open") ?? matches.find(pr => pr.kind === "draft")
-      ?? (data.openComplete ? matches[0] : null);
+    const { matches, found } = matchingPr(data, target.value.head, git.branch);
     // Promotion PRs do not mean a long-lived integration branch is finished.
     if (found?.kind === "merged" && ["develop", "main", "master"].includes(git.branch)) return null;
     return found ? { ...found, count: matches.length }

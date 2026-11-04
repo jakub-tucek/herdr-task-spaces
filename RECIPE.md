@@ -43,6 +43,10 @@ Suppress Merged for develop, main, and master; keep active PR badges on those br
 Retain the last successful result during refresh or brief GitHub failures for
 five minutes beyond its five-minute TTL. Show no refreshing label. After ten
 minutes without success show PR ?; failed attempts must not extend the grace.
+If a repository list is truncated without a reliable match, query the exact
+head owner and branch for open and closed PRs. Still match the full head repo.
+Cache targeted results across worktrees, including confirmed absence (no badge).
+Apply the same pagination bound and grace period; failed/incomplete lookups stay unknown.
 
 Preserve normal blocked/done/working indicators. Optional PR failures must not
 interrupt Git refresh or navigation. Never post, resolve, fetch, stage, commit,

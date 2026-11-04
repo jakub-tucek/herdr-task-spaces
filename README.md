@@ -136,8 +136,11 @@ PRs, and distinguish unknown status
 from no PR. Fork matches include head repo and branch. If one branch has several
 PRs, Open takes precedence over Draft, then Merged; the tooltip notes additional
 matches. Long-lived `develop`, `main`, and `master` branches never show Merged;
-their active Open/Draft badges still appear. Closed-but-unmerged PRs have no badge. Older merges outside the lookup
-limit show PR ? rather than claiming no PR.
+their active Open/Draft badges still appear. Closed-but-unmerged PRs have no badge.
+When the repository-wide list hits its limit without a reliable match, an exact
+head-branch lookup checks both open and closed PRs. Results, including confirmed
+absence, share the same cache and grace period across worktrees. Confirmed no PR
+shows no badge; a failed or still-truncated branch lookup shows PR ?.
 
 This mod has its own monitoring, separate from Annotator: one filesystem watch
 per local Git directory, an inherited 250 ms scheduling check, 15-second machine

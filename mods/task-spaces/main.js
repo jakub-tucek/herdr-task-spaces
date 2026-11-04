@@ -13,12 +13,13 @@ async function gitRemotes({ cwd, on }) {
   return result.stdout;
 }
 
-async function githubPulls(repository, page, state = "open") {
+async function githubPulls(repository, page, state = "open", filter) {
+  const head = filter ? `&head=${encodeURIComponent(`${filter.head.split("/")[0]}:${filter.branch}`)}` : "";
   let result;
   try {
     // Always local, including SSH worktrees. Never send credentials to a remote.
     result = await exec("gh", ["api", "--hostname", "github.com",
-      `repos/${repository}/pulls?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}`]);
+      `repos/${repository}/pulls?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${head}`]);
   } catch {
     throw new Error("GitHub PR status is unavailable. Install gh from https://cli.github.com and run gh auth login on this computer.");
   }
