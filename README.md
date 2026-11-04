@@ -126,7 +126,12 @@ runs local `hc machine ls` and queries **github.com only** using local `gh`, eve
 for SSH worktrees. No GitHub credentials are sent to remote hosts.
 
 PR lists are cached for five minutes and shared across worktrees in the same
-base repo. Reads run serially, stop after 500 open and 500 recently updated closed
+base repo. The last successful result remains visible for five extra minutes
+during refresh or brief GitHub failures, without a refreshing label. Failed
+attempts never extend that grace period; after ten minutes without success,
+status becomes PR ?. A successful refresh replaces the old result immediately.
+The cache is in memory and does not survive mod reloads or app restarts.
+Reads run serially, stop after 500 open and 500 recently updated closed
 PRs, and distinguish unknown status
 from no PR. Fork matches include head repo and branch. If one branch has several
 PRs, Open takes precedence over Draft, then Merged; the tooltip notes additional

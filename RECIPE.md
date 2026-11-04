@@ -40,6 +40,9 @@ minutes across worktrees; serialize reads and cap pagination at 500 open and 500
 recently updated closed PRs. Only merged closed PRs get a badge. Unknown status
 must not look like no PR. If multiple PRs match, prefer Open over Draft over Merged.
 Suppress Merged for develop, main, and master; keep active PR badges on those branches.
+Retain the last successful result during refresh or brief GitHub failures for
+five minutes beyond its five-minute TTL. Show no refreshing label. After ten
+minutes without success show PR ?; failed attempts must not extend the grace.
 
 Preserve normal blocked/done/working indicators. Optional PR failures must not
 interrupt Git refresh or navigation. Never post, resolve, fetch, stage, commit,

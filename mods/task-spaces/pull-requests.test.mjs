@@ -37,19 +37,53 @@ test("TTL refresh updates draft to open and then removes a closed PR", async () 
   let now = 1, result = [pr(true)], reads = 0;
   const reader = new PullRequests({ now: () => now, remotes: async () => remotes, pulls: async () => { reads++; return result; } });
   await reader.refresh(git(), {}); await reader.refresh(git(), {}); assert.equal(reads, 2);
-  now += PR_TTL; assert.equal(reader.state(git()).kind, "unknown");
+  now += PR_TTL; assert.equal(reader.state(git()).kind, "draft");
   result = [pr(false)]; await reader.refresh(git(), {}); assert.equal(reader.state(git()).kind, "open");
   now += PR_TTL; result = []; await reader.refresh(git(), {}); assert.equal(reader.state(git()), null);
 });
 
-test("missing CLI, auth, and connectivity produce unknown, not stale Open or false absence", async () => {
+test("brief GitHub failures keep the last result; repeated failures cannot extend its grace period", async () => {
   let now = 1, failure = false;
   const reader = new PullRequests({ now: () => now, remotes: async () => remotes, pulls: async () => { if (failure) throw new Error("Install gh and run gh auth login on this computer."); return [pr()]; } });
   await reader.refresh(git(), {}); failure = true; now += PR_TTL;
   await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "open");
+  now += PR_TTL;
+  await reader.refresh(git(), {});
   assert.equal(reader.state(git()).kind, "unknown");
   assert.equal(prMarker(reader.state(git())).label, "PR ?");
   assert.match(reader.state(git()).error, /gh auth login/);
+});
+
+test("badges survive an in-flight refresh, expire after grace, and update when it completes", async () => {
+  let now = 1, release;
+  let hold = false;
+  const reader = new PullRequests({ now: () => now, remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => {
+      if (state === "closed") return [];
+      if (hold) return new Promise(resolve => { release = resolve; });
+      return [pr()];
+    } });
+  await reader.refresh(git(), {});
+  hold = true; now += PR_TTL;
+  const refresh = reader.refresh(git(), {});
+  // Let remote discovery and the serial lookup reach the deferred GitHub read.
+  for (let i = 0; i < 10 && !release; i++) await Promise.resolve();
+  assert.equal(typeof release, "function");
+  assert.equal(prMarker(reader.state(git())).label, "Open");
+  assert.equal(reader.state(git("local-repo", "another-branch")), null);
+  now += PR_TTL;
+  assert.equal(reader.state(git()).kind, "unknown");
+  release([pr(true)]);
+  await refresh;
+  assert.equal(prMarker(reader.state(git())).label, "Draft");
+});
+
+test("a failed initial lookup has no old badge to retain", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async () => { throw new Error("Offline"); } });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "unknown");
 });
 
 test("pagination finds later PRs; a capped list never claims no PR", async () => {

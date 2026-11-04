@@ -1,5 +1,6 @@
 // Read-only GitHub metadata. Shared across worktrees; unknown is never "no PR".
 export const PR_TTL = 5 * 60 * 1000;
+const PR_GRACE = 5 * 60 * 1000;
 const MAX_PAGES = 5;
 
 export function githubRepository(url) {
@@ -86,9 +87,10 @@ export class PullRequests {
           if (state === "open") openComplete = finished;
           complete = complete && finished;
         }
-        entry = { at: this.now(), items, complete, openComplete, error: null };
+        entry = { at: this.now(), validAt: this.now(), items, complete, openComplete, error: null };
       } catch (e) {
-        entry = { at: this.now(), items: previous?.items ?? [], complete: false,
+        // A failed attempt must not extend the last successful result's lifetime.
+        entry = { ...previous, at: this.now(), items: previous?.items ?? [],
           error: String(e).replace(/^Error:\s*/, "").slice(0, 500) };
       }
       this.repositories.set(repository, entry);
@@ -107,9 +109,9 @@ export class PullRequests {
     if (!target.value) return null; // Not a supported GitHub remote.
     const data = this.repositories.get(target.value.base);
     if (!data) return null;
-    if (data.error) return { kind: "unknown", error: data.error };
-    if (this.now() - data.at >= PR_TTL || this.now() - target.at >= PR_TTL) {
-      return { kind: "unknown", error: "PR status is being refreshed; the previous result is stale." };
+    if (data.validAt == null || this.now() - data.validAt >= PR_TTL + PR_GRACE
+      || this.now() - target.at >= PR_TTL + PR_GRACE) {
+      return { kind: "unknown", error: data.error ?? "PR status is unavailable; the last successful result is over ten minutes old." };
     }
     const matches = data.items.filter(pr => pr.head === target.value.head && pr.branch === git.branch);
     const found = matches.find(pr => pr.kind === "open") ?? matches.find(pr => pr.kind === "draft")
