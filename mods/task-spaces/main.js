@@ -414,7 +414,13 @@ export default class Spaces extends View {
             .child(div().flex_shrink(1).min_w(0).max_w(150).truncate().text_color(t.foreground).child(title))
             .child(g ? this.gitTail(g, tree, task ? title : w.name, t) : div().flex_1())
             .when(Boolean(pr), el => el.child(div().id(`pr-state-${w.id}`).flex_none().px(5).py(1).rounded(4)
-              .bg((t[pr.tone] ?? t.dim) + "18").text_color(t[pr.tone] ?? t.dim).text_size(10).child(pr.label).tooltip(pr.title))),
+              .bg((t[pr.tone] ?? t.dim) + "18").text_color(t[pr.tone] ?? t.dim).text_size(10).child(pr.label).tooltip(pr.title)
+              .when(Boolean(pr.url), badge => badge.cursor_pointer().hover(s => s.bg((t[pr.tone] ?? t.dim) + "30"))
+                .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+                .on_mouse_up("left", (_e, cx) => {
+                  cx.stop_propagation(); this.pressed = null; this.over = null; cx.notify();
+                })
+                .on_click((_e, cx) => { cx.stop_propagation(); cx.open_url(pr.url); })))),
       );
   }
 

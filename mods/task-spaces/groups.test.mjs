@@ -132,6 +132,31 @@ test("sidebar renders groups; collapse, reopen, row selection and compact naviga
   nodes.filter(n => n.id === "space-old").at(-1).events.on_click();
   assert.equal(commands.at(-1)[1].id, "old");
   assert.ok(!commands.some(([command]) => command === "space.move"));
+
+  const opened = []; let stopped = 0;
+  const linkCx = { notify() {}, stop_propagation() { stopped++; }, open_url(url) { opened.push(url); } };
+  const before = commands.length;
+  for (const [kind, label] of [["draft", "Draft"], ["open", "Open"], ["merged", "Merged"]]) {
+    sidebar.pullRequests = { state: () => ({ kind, number: 42, url: "https://github.com/team/project/pull/42" }) };
+    renderRow(rows[0], t);
+    const badge = nodes.filter(n => n.id === "pr-state-lead").at(-1);
+    assert.ok(badge.children.includes(label));
+    badge.events["on_mouse_down:left"](null, linkCx);
+    assert.equal(sidebar.pressed, null, "badge presses do not start workspace dragging");
+    sidebar.pressed = 1; sidebar.over = 0;
+    badge.events["on_mouse_up:left"](null, linkCx);
+    assert.equal(sidebar.pressed, null);
+    assert.equal(sidebar.over, null);
+    badge.events.on_click(null, linkCx);
+  }
+  assert.equal(stopped, 9);
+  assert.deepEqual(opened, Array(3).fill("https://github.com/team/project/pull/42"));
+  assert.equal(commands.length, before, "PR clicks neither select nor reorder workspaces");
+  sidebar.pullRequests = { state: () => ({ kind: "unknown", error: "Offline" }) };
+  renderRow(rows[0], t);
+  const unknown = nodes.filter(n => n.id === "pr-state-lead").at(-1);
+  assert.ok(unknown.children.includes("PR ?"));
+  assert.equal(unknown.events.on_click, undefined, "unknown status is not a link");
 });
 
 test("markers create custom groups; configuration only sets display labels and order", () => {

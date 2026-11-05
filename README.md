@@ -11,6 +11,8 @@ named groups, and keep the same spaces, terminals, and menus.
 - Groups by **machine → repository → task group**. Machines and repos stay separate.
 - Reads group membership from branch names; custom groups need no registration.
 - Shows **Draft**, **Open**, **Merged**, or **PR ?** with the PR number and URL in a tooltip.
+- Click a Draft/Open/Merged badge to open the PR in your local default browser,
+  without selecting or dragging its workspace. PR ? is not a link.
 - Supports local and SSH worktrees, fork PRs, group folding, and a compact rail.
 - Keeps ungrouped workspaces one level up, without an Ungrouped header.
 - Does not rename branches, move worktrees, or create spaces to enforce grouping.

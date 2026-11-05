@@ -13,6 +13,8 @@ under their repo, and collapse groups without moving or renaming your work.
 - Workspace rows with their existing names or readable task slugs, Git ahead/behind
   and dirty indicators, and a small gray Draft, green Open, or purple Merged PR badge.
 - PR ? for unavailable or stale metadata. Hover for the number, URL, or explanation.
+  Click Draft/Open/Merged to open the PR in the local default browser. Stop mouse
+  propagation so badge clicks do not select or reorder workspaces; PR ? stays inert.
 - Ungrouped rows directly under their repo, not inside a category. Orchestrators
   appear first with a compass; custom groups require no registration.
 - Theme colors, 28–30 px workspace rows, compact numbered navigation below a

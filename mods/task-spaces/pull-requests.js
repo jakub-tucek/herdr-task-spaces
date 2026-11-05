@@ -28,7 +28,7 @@ export function prMarker(pr) {
   if (!pr) return null;
   if (pr.kind === "unknown") return { label: "PR ?", tone: "dim", title: pr.error };
   const label = pr.kind === "merged" ? "Merged" : pr.kind === "draft" ? "Draft" : "Open";
-  return { label, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : "ansi2",
+  return { label, url: pr.url, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : "ansi2",
     title: `${label} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : ""}` };
 }
 
