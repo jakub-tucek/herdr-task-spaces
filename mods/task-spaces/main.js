@@ -27,6 +27,31 @@ async function githubPulls(repository, page, state = "open", filter) {
   return JSON.parse(result.stdout);
 }
 
+// GitHub's aggregate review decision, one request for a whole batch of PRs.
+// REST has no such field per PR, so this is GraphQL; it stays local like pulls.
+async function githubApprovals(repository, numbers) {
+  const [owner, name] = repository.split("/");
+  const fields = numbers.map((number) => `pr${number}: pullRequest(number: ${number}) { state isDraft reviewDecision }`).join(" ");
+  let result;
+  try {
+    result = await exec("gh", ["api", "--hostname", "github.com", "graphql",
+      "-f", `query=query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields} } }`,
+      "-F", `owner=${owner}`, "-F", `name=${name}`]);
+  } catch {
+    throw new Error("GitHub review status is unavailable. Install gh from https://cli.github.com and run gh auth login on this computer.");
+  }
+  if (result.code !== 0) throw new Error(`GitHub review status is unavailable. Check gh auth status and your connection. ${(result.stderr || "").trim().slice(0, 250)}`);
+  const repo = JSON.parse(result.stdout)?.data?.repository;
+  if (!repo || typeof repo !== "object") throw new Error("GitHub returned no review status for this repository.");
+  const approved = new Set();
+  for (const number of numbers) {
+    const pr = repo[`pr${number}`];
+    // Only an open, ready PR whose aggregate decision is APPROVED counts.
+    if (pr && pr.state === "OPEN" && pr.isDraft === false && pr.reviewDecision === "APPROVED") approved.add(number);
+  }
+  return approved;
+}
+
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) {
@@ -75,7 +100,7 @@ export default class Spaces extends View {
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
     this.watching = new Set(); // local repos' git folders
-    this.pullRequests = props()?.github === false ? null : new PullRequests({ remotes: gitRemotes, pulls: githubPulls });
+    this.pullRequests = props()?.github === false ? null : new PullRequests({ remotes: gitRemotes, pulls: githubPulls, approvals: githubApprovals });
     this.nextPrCheck = 0;
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.

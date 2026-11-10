@@ -27,8 +27,8 @@ export function prTarget(remotes) {
 export function prMarker(pr) {
   if (!pr) return null;
   if (pr.kind === "unknown") return { label: "PR ?", tone: "dim", title: pr.error };
-  const label = pr.kind === "merged" ? "Merged" : pr.kind === "draft" ? "Draft" : "Open";
-  return { label, url: pr.url, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : "ansi2",
+  const label = pr.kind === "merged" ? "Merged" : pr.kind === "draft" ? "Draft" : pr.approved ? "Approved" : "Open";
+  return { label, url: pr.url, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : pr.approved ? "ansi6" : "ansi2",
     title: `${label} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : ""}` };
 }
 
@@ -41,8 +41,8 @@ function matchingPr(data, head, branch) {
 }
 
 export class PullRequests {
-  constructor({ remotes, pulls, now = () => Date.now() }) {
-    this.loadRemotes = remotes; this.loadPulls = pulls; this.now = now;
+  constructor({ remotes, pulls, approvals, now = () => Date.now() }) {
+    this.loadRemotes = remotes; this.loadPulls = pulls; this.loadApprovals = approvals; this.now = now;
     this.targets = new Map(); this.repositories = new Map();
     this.pendingTargets = new Map(); this.pendingRepos = new Map();
     this.tail = Promise.resolve();
@@ -107,6 +107,7 @@ export class PullRequests {
           if (state === "open") openComplete = finished;
           complete = complete && finished;
         }
+        await this.markApproved(repository, items);
         entry = { at: this.now(), validAt: this.now(), items, complete, openComplete, error: null };
       } catch (e) {
         // A failed attempt must not extend the last successful result's lifetime.
@@ -119,6 +120,18 @@ export class PullRequests {
     this.tail = work.catch(() => {});
     try { await work; } finally { this.pendingRepos.delete(key); }
     return true;
+  }
+
+  // One review read per list, for the open PRs that list actually carries.
+  // A review failure never denies the PR itself: the badge stays Open.
+  async markApproved(repository, items) {
+    if (!this.loadApprovals) return;
+    const numbers = [...new Set(items.filter(pr => pr.kind === "open").map(pr => pr.number))].sort((a, b) => a - b);
+    if (!numbers.length) return;
+    let approved;
+    try { approved = await this.loadApprovals(repository, numbers); }
+    catch { return; }
+    for (const pr of items) if (pr.kind === "open" && approved?.has(pr.number)) pr.approved = true;
   }
 
   state(git) {

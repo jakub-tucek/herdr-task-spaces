@@ -143,7 +143,7 @@ function adapters(exec) {
     .replace(/^import .*;\n/gm, "").replace(/export function /g, "function ")
     .replace("export default class Spaces", "class Spaces");
   const context = { exec, View: class {} };
-  vm.runInNewContext(source + "\nglobalThis.api = { gitRemotes, githubPulls };", context);
+  vm.runInNewContext(source + "\nglobalThis.api = { gitRemotes, githubPulls, githubApprovals };", context);
   return context.api;
 }
 
@@ -221,4 +221,78 @@ test("a truncated open list cannot claim an old merged PR is current", async () 
 test("missing gh produces local install/sign-in guidance without throwing into the view", async () => {
   const api = adapters(async () => { throw new Error("Cannot start command"); });
   await assert.rejects(api.githubPulls("team/project", 1), /Install gh.*gh auth login on this computer/);
+});
+
+test("approved badge uses the aggregate decision, preserving draft and merged priority", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [pr(), pr(true, "draft")]
+      : [{ ...pr(false, "merged"), state: "closed", merged_at: "2026-11-04T10:00:00Z" }],
+    approvals: async () => new Set([42]) });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git()).kind, "open");
+  assert.equal(prMarker(reader.state(git())).label, "Approved");
+  assert.match(prMarker(reader.state(git())).title, /Approved PR #42/);
+  assert.equal(prMarker(reader.state(git("local-repo", "draft"))).label, "Draft");
+  assert.equal(prMarker(reader.state(git("local-repo", "merged"))).label, "Merged");
+});
+
+test("approval lookups are batched per repository, shared across worktrees, and revoked on refresh", async () => {
+  let now = 1, approved = true;
+  const calls = [];
+  const reader = new PullRequests({ now: () => now, remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [pr(), { ...pr(false, "other"), number: 43 }] : [],
+    approvals: async (repo, numbers) => { calls.push({ repo, numbers }); return new Set(approved ? [42] : []); } });
+  await Promise.all([reader.refresh(git(), {}), reader.refresh(git("remote-repo"), { on: "manjaro" })]);
+  assert.deepEqual(calls, [{ repo: "team/project", numbers: [42, 43] }]);
+  assert.equal(prMarker(reader.state(git())).label, "Approved");
+  assert.equal(prMarker(reader.state(git("remote-repo"))).label, "Approved");
+  approved = false; now += PR_TTL;
+  await reader.refresh(git(), {});
+  assert.equal(prMarker(reader.state(git())).label, "Open");
+});
+
+test("a failed review read keeps PR status without claiming approval", async () => {
+  let now = 1, fail = false;
+  const reader = new PullRequests({ now: () => now, remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [pr()] : [],
+    approvals: async () => { if (fail) throw new Error("Unavailable"); return new Set([42]); } });
+  await reader.refresh(git(), {});
+  assert.equal(prMarker(reader.state(git())).label, "Approved");
+  now += PR_TTL; fail = true;
+  await reader.refresh(git(), {});
+  assert.equal(prMarker(reader.state(git())).label, "Open");
+  assert.equal(reader.state(git()).kind, "open");
+});
+
+test("a sidebar without an approvals reader still shows Open", async () => {
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [pr()] : [] });
+  await reader.refresh(git(), {});
+  assert.equal(prMarker(reader.state(git())).label, "Open");
+});
+
+test("GraphQL approval batches run locally and accept only APPROVED open non-drafts", async () => {
+  const calls = [];
+  const api = adapters(async (...args) => {
+    calls.push(args);
+    return { code: 0, stdout: JSON.stringify({ data: { repository: {
+      pr42: { state: "OPEN", isDraft: false, reviewDecision: "APPROVED" },
+      pr43: { state: "OPEN", isDraft: false, reviewDecision: "CHANGES_REQUESTED" },
+      pr44: { state: "MERGED", isDraft: false, reviewDecision: "APPROVED" },
+      pr45: { state: "OPEN", isDraft: true, reviewDecision: "APPROVED" },
+      pr46: null } } }) };
+  });
+  const result = await api.githubApprovals("team/project", [42, 43, 44, 45, 46]);
+  assert.deepEqual([...result], [42]);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "gh");
+  assert.equal(calls[0].length, 2, "review reads also stay local");
+  assert.ok(calls[0][1].includes("graphql"));
+  assert.ok(calls[0][1].some(arg => arg.includes("reviewDecision")));
+});
+
+test("a failed or unparsable review read throws instead of denying approval silently", async () => {
+  await assert.rejects(adapters(async () => { throw new Error("Cannot start command"); }).githubApprovals("team/project", [42]), /review status is unavailable/);
+  await assert.rejects(adapters(async () => ({ code: 1, stderr: "gh: Bad credentials" })).githubApprovals("team/project", [42]), /Bad credentials/);
+  await assert.rejects(adapters(async () => ({ code: 0, stdout: "{}" })).githubApprovals("team/project", [42]), /review status/);
 });

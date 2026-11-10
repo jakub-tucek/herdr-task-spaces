@@ -1,6 +1,6 @@
 # Herdr Task Spaces
 
-Group Herdr worktrees by repository and task, with **Draft/Open/Merged GitHub PR badges**
+Group Herdr worktrees by repository and task, with **Draft/Open/Approved/Merged GitHub PR badges**
 beside each branch. Keep ordinary workspaces directly under their repo, collapse
 named groups, and keep the same spaces, terminals, and menus.
 
@@ -10,8 +10,9 @@ named groups, and keep the same spaces, terminals, and menus.
 
 - Groups by **machine → repository → task group**. Machines and repos stay separate.
 - Reads group membership from branch names; custom groups need no registration.
-- Shows **Draft**, **Open**, **Merged**, or **PR ?** with the PR number and URL in a tooltip.
-- Click a Draft/Open/Merged badge to open the PR in your local default browser,
+- Shows **Draft**, **Open**, **Approved**, **Merged**, or **PR ?** with the PR number and URL in a tooltip.
+- **Approved** replaces Open once GitHub's review decision for that PR is approved.
+- Click a Draft/Open/Approved/Merged badge to open the PR in your local default browser,
   without selecting or dragging its workspace. PR ? is not a link.
 - Supports local and SSH worktrees, fork PRs, group folding, and a compact rail.
 - Keeps ungrouped workspaces one level up, without an Ungrouped header.
@@ -137,7 +138,11 @@ Reads run serially, stop after 500 open and 500 recently updated closed
 PRs, and distinguish unknown status
 from no PR. Fork matches include head repo and branch. If one branch has several
 PRs, Open takes precedence over Draft, then Merged; the tooltip notes additional
-matches. Long-lived `develop`, `main`, and `master` branches never show Merged;
+matches. One extra GraphQL request per repository list reads the aggregate review
+decision for the open PRs in it; only an open, non-draft PR with `APPROVED` shows
+Approved. A failed review read leaves the badge at Open rather than denying
+approval, and approval disappears again when GitHub revokes it on the next refresh.
+Long-lived `develop`, `main`, and `master` branches never show Merged;
 their active Open/Draft badges still appear. Closed-but-unmerged PRs have no badge.
 When the repository-wide list hits its limit without a reliable match, an exact
 head-branch lookup checks both open and closed PRs. Results, including confirmed
