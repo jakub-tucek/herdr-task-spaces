@@ -50,9 +50,15 @@ test("brief GitHub failures keep the last result; repeated failures cannot exten
   assert.equal(reader.state(git()).kind, "open");
   now += PR_TTL;
   await reader.refresh(git(), {});
-  assert.equal(reader.state(git()).kind, "unknown");
-  assert.equal(prMarker(reader.state(git())).label, "PR ?");
-  assert.match(reader.state(git()).error, /gh auth login/);
+  // Past the grace period the PR and its link stay, marked outdated.
+  const stale = reader.state(git());
+  assert.equal(stale.kind, "open");
+  assert.equal(stale.stale, true);
+  assert.equal(prMarker(stale, now).label, "Open ?");
+  assert.equal(prMarker(stale, now).tone, "dim");
+  assert.ok(prMarker(stale, now).url);
+  assert.match(prMarker(stale, now).title, /Outdated: last confirmed/);
+  assert.match(stale.error, /gh auth login/);
 });
 
 test("badges survive an in-flight refresh, expire after grace, and update when it completes", async () => {
@@ -73,10 +79,25 @@ test("badges survive an in-flight refresh, expire after grace, and update when i
   assert.equal(prMarker(reader.state(git())).label, "Open");
   assert.equal(reader.state(git("local-repo", "another-branch")), null);
   now += PR_TTL;
-  assert.equal(reader.state(git()).kind, "unknown");
+  assert.equal(prMarker(reader.state(git()), now).label, "Open ?");
   release([pr(true)]);
   await refresh;
   assert.equal(prMarker(reader.state(git())).label, "Draft");
+});
+
+test("a machine that goes away keeps its PR link, marked outdated", async () => {
+  let now = 1, away = false;
+  const reader = new PullRequests({ now: () => now,
+    remotes: async () => { if (away) throw new Error("machine unreachable"); return remotes; },
+    pulls: async (_repo, _page, state) => state === "open" ? [pr()] : [] });
+  await reader.refresh(git(), {});
+  assert.equal(prMarker(reader.state(git())).label, "Open");
+  away = true; now += PR_TTL;
+  await reader.refresh(git(), {});
+  const marker = prMarker(reader.state(git()), now);
+  assert.equal(marker.label, "Open ?");
+  assert.equal(marker.url, "https://github.com/team/project/pull/42");
+  assert.match(marker.title, /Outdated: last confirmed/);
 });
 
 test("a failed initial lookup has no old badge to retain", async () => {
@@ -207,6 +228,17 @@ test("long-lived branches never show Merged, but retain active PR badges", async
   assert.equal(reader.state(git("local-repo", "develop")).kind, "open");
   assert.equal(reader.state(git("local-repo", "main")).kind, "draft");
   assert.equal(reader.state(git("local-repo", "master")), null);
+});
+
+test("an open release PR between long-lived branches is not this branch's badge", async () => {
+  const release = { ...pr(false, "develop"), base: { ref: "master" } };
+  const reader = new PullRequests({ remotes: async () => remotes,
+    pulls: async (_repo, _page, state) => state === "open" ? [release, { ...pr(false, "feature"), base: { ref: "develop" } }] : [],
+    approvals: async (_repo, numbers) => new Set(numbers) });
+  await reader.refresh(git(), {});
+  assert.equal(reader.state(git("local-repo", "develop")), null);
+  // Work branches keep their badge even when they target an integration branch.
+  assert.equal(prMarker(reader.state(git("local-repo", "feature"))).label, "Approved");
 });
 
 test("a truncated open list cannot claim an old merged PR is current", async () => {

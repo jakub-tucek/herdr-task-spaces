@@ -13,7 +13,9 @@ under their repo, and collapse groups without moving or renaming your work.
 - Workspace rows with their existing names or readable task slugs, Git ahead/behind
   and dirty indicators, and a small gray Draft, green Open, teal Approved, or
   purple Merged PR badge.
-- PR ? for unavailable or stale metadata. Hover for the number, URL, or explanation.
+- An outdated reading keeps its label and link, dimmed with a trailing `?`
+  (Open ?, Approved ?). PR ? only when nothing was ever read for that branch.
+- PR ? for unavailable metadata. Hover for the number, URL, or explanation.
   Click Draft/Open/Approved/Merged to open the PR in the local default browser. Stop mouse
   propagation so badge clicks do not select or reorder workspaces; PR ? stays inert.
 - Ungrouped rows directly under their repo, not inside a category. Orchestrators
@@ -47,10 +49,15 @@ repository list, batching the open PRs it contains. Show Approved instead of Ope
 only for an open, non-draft PR whose decision is APPROVED; Draft and Merged keep
 their own badges. A failed review read keeps the PR badge it already earned and
 never claims approval; a revoked approval returns to Open on the next refresh.
-Suppress Merged for develop, main, and master; keep active PR badges on those branches.
-Retain the last successful result during refresh or brief GitHub failures for
-five minutes beyond its five-minute TTL. Show no refreshing label. After ten
-minutes without success show PR ?; failed attempts must not extend the grace.
+Suppress Merged for develop, main, and master, and suppress a promotion PR whose
+base is another of those branches (a develop → master release); keep their own
+PR badges. Retain the last successful result during refresh or brief GitHub
+failures for five minutes beyond its five-minute TTL. Show no refreshing label.
+After ten minutes without success, keep the last known badge and link, dimmed,
+with a trailing `?` and a tooltip line saying when it was last confirmed; show
+PR ? only when no PR was ever read for that branch. A remote read failure keeps
+the repository identity the machine last reported, so an offline machine's rows
+keep their links. Failed attempts must not extend the grace.
 If a repository list is truncated without a reliable match, query the exact
 head owner and branch for open and closed PRs. Still match the full head repo.
 Cache targeted results across worktrees, including confirmed absence (no badge).

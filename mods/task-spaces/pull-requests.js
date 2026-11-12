@@ -2,6 +2,8 @@
 export const PR_TTL = 5 * 60 * 1000;
 const PR_GRACE = 5 * 60 * 1000;
 const MAX_PAGES = 5;
+// Long-lived branches; a PR between two of them promotes a release.
+const INTEGRATION = ["develop", "main", "master"];
 
 export function githubRepository(url) {
   if (typeof url !== "string") return null;
@@ -24,12 +26,27 @@ export function prTarget(remotes) {
   return head && base ? { head, base } : null;
 }
 
-export function prMarker(pr) {
+export function since(ms, now = Date.now()) {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "a while ago";
+  const minutes = Math.max(0, Math.round((now - ms) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
+}
+
+export function prMarker(pr, now = Date.now()) {
   if (!pr) return null;
   if (pr.kind === "unknown") return { label: "PR ?", tone: "dim", title: pr.error };
   const label = pr.kind === "merged" ? "Merged" : pr.kind === "draft" ? "Draft" : pr.approved ? "Approved" : "Open";
-  return { label, url: pr.url, tone: pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : pr.approved ? "ansi6" : "ansi2",
-    title: `${label} PR #${pr.number}\n${pr.url}${pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : ""}` };
+  const tail = pr.count > 1 ? `\n${pr.count - 1} more PR(s) for this branch` : "";
+  // Outdated: the last known state and its link, with a question mark and when
+  // it was last confirmed, rather than losing both.
+  const stale = pr.stale
+    ? `\nOutdated: last confirmed ${since(pr.since, now)}${pr.error ? `\n${pr.error}` : ""}` : "";
+  return { label: pr.stale ? `${label} ?` : label, url: pr.url, stale: Boolean(pr.stale),
+    tone: pr.stale ? "dim" : pr.kind === "merged" ? "ansi5" : pr.kind === "draft" ? "muted" : pr.approved ? "ansi6" : "ansi2",
+    title: `${label} PR #${pr.number}\n${pr.url}${tail}${stale}` };
 }
 
 const branchKey = (target, branch) => JSON.stringify([target.base, target.head, branch]);
@@ -55,9 +72,12 @@ export class PullRequests {
       let work = this.pendingTargets.get(git.repo);
       if (!work) {
         work = (async () => {
+          const previous = this.targets.get(git.repo);
           let entry;
           try { entry = { at: this.now(), value: prTarget(await this.loadRemotes(location)), error: null }; }
-          catch { entry = { at: this.now(), value: null, error: "Cannot read this checkout's Git remotes. PR status is unavailable." }; }
+          // A machine that went away keeps the identity it last reported, so its
+          // PRs stay readable here; the badge says the reading is outdated.
+          catch { entry = { at: this.now(), value: previous?.value ?? null, error: "Cannot read this checkout's Git remotes. PR status may be outdated." }; }
           this.targets.set(git.repo, entry);
           return entry;
         })();
@@ -100,6 +120,7 @@ export class PullRequests {
               }
               const head = pr.head.repo?.full_name?.toLowerCase();
               if (head) items.push({ head, branch: pr.head.ref, number: pr.number,
+                base: typeof pr.base?.ref === "string" ? pr.base.ref : null,
                 kind: state === "closed" ? "merged" : pr.draft ? "draft" : "open", url: `https://github.com/${repository}/pull/${pr.number}` });
             }
             if (batch.length < 100) { finished = true; break; }
@@ -138,21 +159,31 @@ export class PullRequests {
     if (!git?.repo || !git.branch || git.branch === "(detached)" || git.branch === "(initial)") return null;
     const target = this.targets.get(git.repo);
     if (!target) return null; // Initial load has no claimed status.
-    if (target.error) return { kind: "unknown", error: target.error };
+    // A failed remote read with nothing remembered is unknown; with a remembered
+    // identity the PR list still works and the badge says it is outdated.
+    if (target.error && !target.value) return { kind: "unknown", error: target.error };
     if (!target.value) return null; // Not a supported GitHub remote.
     let data = this.repositories.get(target.value.base);
     if (!data) return null;
     if (!data.complete && !matchingPr(data, target.value.head, git.branch).found) {
       data = this.repositories.get(branchKey(target.value, git.branch)) ?? data;
     }
-    if (data.validAt == null || this.now() - data.validAt >= PR_TTL + PR_GRACE
-      || this.now() - target.at >= PR_TTL + PR_GRACE) {
-      return { kind: "unknown", error: data.error ?? "PR status is unavailable; the last successful result is over ten minutes old." };
-    }
+    const old = data.validAt == null || this.now() - data.validAt >= PR_TTL + PR_GRACE
+      || this.now() - target.at >= PR_TTL + PR_GRACE;
     const { matches, found } = matchingPr(data, target.value.head, git.branch);
-    // Promotion PRs do not mean a long-lived integration branch is finished.
-    if (found?.kind === "merged" && ["develop", "main", "master"].includes(git.branch)) return null;
-    return found ? { ...found, count: matches.length }
-      : data.complete ? null : { kind: "unknown", error: "GitHub's PR list exceeded the lookup limit. This branch's status is unknown." };
+    // Promotion PRs do not mean a long-lived integration branch is finished, and
+    // a release PR from develop into master is not this checkout's work.
+    if (INTEGRATION.includes(git.branch)
+      && (found?.kind === "merged" || INTEGRATION.includes(found?.base))) return null;
+    // An outdated reading still carries the PR and its link: keep showing them,
+    // marked outdated, rather than dropping to "no idea".
+    const outdated = old || Boolean(target.error);
+    if (!found) {
+      return old || !data.complete
+        ? { kind: "unknown", error: data.error ?? target.error ?? "GitHub's PR list exceeded the lookup limit. This branch's status is unknown." }
+        : null;
+    }
+    return { ...found, count: matches.length,
+      ...(outdated ? { stale: true, since: data.validAt ?? null, error: data.error ?? target.error ?? null } : {}) };
   }
 }

@@ -14,6 +14,8 @@ named groups, and keep the same spaces, terminals, and menus.
 - **Approved** replaces Open once GitHub's review decision for that PR is approved.
 - Click a Draft/Open/Approved/Merged badge to open the PR in your local default browser,
   without selecting or dragging its workspace. PR ? is not a link.
+- Keeps the last known badge and link when a machine or GitHub goes away, dimmed
+  and marked `?` (Open ?), with the time it was last confirmed in the tooltip.
 - Supports local and SSH worktrees, fork PRs, group folding, and a compact rail.
 - Keeps ungrouped workspaces one level up, without an Ungrouped header.
 - Does not rename branches, move worktrees, or create spaces to enforce grouping.
@@ -131,8 +133,12 @@ for SSH worktrees. No GitHub credentials are sent to remote hosts.
 PR lists are cached for five minutes and shared across worktrees in the same
 base repo. The last successful result remains visible for five extra minutes
 during refresh or brief GitHub failures, without a refreshing label. Failed
-attempts never extend that grace period; after ten minutes without success,
-status becomes PR ?. A successful refresh replaces the old result immediately.
+attempts never extend that grace period; after ten minutes without success, a
+known PR keeps its label and link with a trailing `?` (Open ?, Approved ?) in a
+dim tone, and the tooltip says when it was last confirmed. Only a branch with no
+remembered PR falls back to PR ?. A successful refresh replaces the old result immediately.
+A machine that goes offline keeps the repository identity it last reported, so
+its workspaces keep their PR links, marked outdated, instead of losing them.
 The cache is in memory and does not survive mod reloads or app restarts.
 Reads run serially, stop after 500 open and 500 recently updated closed
 PRs, and distinguish unknown status
@@ -142,8 +148,9 @@ matches. One extra GraphQL request per repository list reads the aggregate revie
 decision for the open PRs in it; only an open, non-draft PR with `APPROVED` shows
 Approved. A failed review read leaves the badge at Open rather than denying
 approval, and approval disappears again when GitHub revokes it on the next refresh.
-Long-lived `develop`, `main`, and `master` branches never show Merged;
-their active Open/Draft badges still appear. Closed-but-unmerged PRs have no badge.
+Long-lived `develop`, `main`, and `master` branches never show Merged, nor a
+release promotion PR into another long-lived branch (`develop` → `master`);
+their own Open/Draft badges still appear. Closed-but-unmerged PRs have no badge.
 When the repository-wide list hits its limit without a reliable match, an exact
 head-branch lookup checks both open and closed PRs. Results, including confirmed
 absence, share the same cache and grace period across worktrees. Confirmed no PR
